@@ -1,6 +1,7 @@
 package requester
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -9,9 +10,6 @@ type ServerReport struct {
 	// Set longest duration from each server work
 	TotalDuration time.Duration `json:"totalDuration"`
 	AvgTotal      float64       `json:"avgTotal"`
-	Fastest       float64       `json:"fastest"`
-	Slowest       float64       `json:"slowest"`
-	Average       float64       `json:"average"`
 	Rps           float64       `json:"rps"`
 	ContentLength int64         `json:"contentLength"`
 	AvgConn       float64       `json:"avgConn"`
@@ -19,6 +17,7 @@ type ServerReport struct {
 	AvgReq        float64       `json:"avgReq"`
 	AvgRes        float64       `json:"avgRes"`
 	AvgDelay      float64       `json:"avgDelay"`
+	Lats          []float64     `json:"lats"`
 	ConnLats      []float64     `json:"connLats"`
 	DnsLats       []float64     `json:"dnsLats"`
 	ReqLats       []float64     `json:"reqLats"`
@@ -26,21 +25,31 @@ type ServerReport struct {
 	DelayLats     []float64     `json:"delayLats"`
 	Offsets       []float64     `json:"offsets"`
 	StatusCodes   []int         `json:"statusCodes"`
+
+	Errors map[string]int `json:"errors"`
 }
 
 func GenClientReport(reps []ServerReport) Report {
+	// TODO: 適当
+	var isError bool
+	for _, rep := range reps {
+		if len(rep.Errors) > 0 {
+			for k := range rep.Errors {
+				fmt.Println("Error:", k)
+			}
+			isError = true
+			break
+		}
+	}
+	if isError {
+		return Report{}
+	}
+
 	snapshot := Report{}
 	snapshot.AvgTotal = func() float64 {
 		var sum float64
 		for _, rep := range reps {
 			sum += rep.AvgTotal
-		}
-		return sum / float64(len(reps))
-	}()
-	snapshot.Average = func() float64 {
-		var sum float64
-		for _, rep := range reps {
-			sum += rep.Average
 		}
 		return sum / float64(len(reps))
 	}()
@@ -95,31 +104,25 @@ func GenClientReport(reps []ServerReport) Report {
 		return sum / float64(len(reps))
 	}()
 	snapshot.Total = 0 // Not used
-	snapshot.Lats = []float64{}
 	for _, rep := range reps {
-		snapshot.Lats = append(snapshot.Lats, rep.Fastest)
+		snapshot.Lats = append(snapshot.Lats, rep.Lats...)
 	}
-	snapshot.ConnLats = []float64{}
+	// snapshot.Lats = rep
 	for _, rep := range reps {
-		snapshot.ConnLats = append(snapshot.ConnLats, rep.AvgConn)
+		snapshot.ConnLats = append(snapshot.ConnLats, rep.ConnLats...)
 	}
-	snapshot.DnsLats = []float64{}
 	for _, rep := range reps {
-		snapshot.DnsLats = append(snapshot.DnsLats, rep.AvgDNS)
+		snapshot.DnsLats = append(snapshot.DnsLats, rep.DnsLats...)
 	}
-	snapshot.ReqLats = []float64{}
 	for _, rep := range reps {
-		snapshot.ReqLats = append(snapshot.ReqLats, rep.AvgReq)
+		snapshot.ReqLats = append(snapshot.ReqLats, rep.ReqLats...)
 	}
-	snapshot.ResLats = []float64{}
 	for _, rep := range reps {
-		snapshot.ResLats = append(snapshot.ResLats, rep.AvgRes)
+		snapshot.ResLats = append(snapshot.ResLats, rep.ResLats...)
 	}
-	snapshot.DelayLats = []float64{}
 	for _, rep := range reps {
-		snapshot.DelayLats = append(snapshot.DelayLats, rep.AvgDelay)
+		snapshot.DelayLats = append(snapshot.DelayLats, rep.DelayLats...)
 	}
-	snapshot.StatusCodes = []int{}
 	for _, rep := range reps {
 		snapshot.StatusCodes = append(snapshot.StatusCodes, rep.StatusCodes...)
 	}
@@ -133,41 +136,29 @@ func GenClientReport(reps []ServerReport) Report {
 		}
 	}
 
-	lats := []float64{}
-	copy(lats, snapshot.Lats)
-	sort.Float64s(lats)
-	snapshot.Fastest = lats[0]
-	snapshot.Slowest = lats[len(lats)-1]
+	sort.Float64s(snapshot.Lats)
+	snapshot.Fastest = snapshot.Lats[0]
+	snapshot.Slowest = snapshot.Lats[len(snapshot.Lats)-1]
 
-	connLats := []float64{}
-	copy(connLats, snapshot.ConnLats)
-	sort.Float64s(connLats)
-	snapshot.ConnMax = connLats[0]
-	snapshot.ConnMin = connLats[len(connLats)-1]
+	sort.Float64s(snapshot.ConnLats)
+	snapshot.ConnMax = snapshot.ConnLats[0]
+	snapshot.ConnMin = snapshot.ConnLats[len(snapshot.ConnLats)-1]
 
-	dnsLats := []float64{}
-	copy(dnsLats, snapshot.DnsLats)
-	sort.Float64s(dnsLats)
-	snapshot.DnsMax = dnsLats[0]
-	snapshot.DnsMin = dnsLats[len(dnsLats)-1]
+	sort.Float64s(snapshot.DnsLats)
+	snapshot.DnsMax = snapshot.DnsLats[0]
+	snapshot.DnsMin = snapshot.DnsLats[len(snapshot.DnsLats)-1]
 
-	reqLats := []float64{}
-	copy(reqLats, snapshot.ReqLats)
-	sort.Float64s(reqLats)
-	snapshot.ReqMax = reqLats[0]
-	snapshot.ReqMin = reqLats[len(reqLats)-1]
+	sort.Float64s(snapshot.ReqLats)
+	snapshot.ReqMax = snapshot.ReqLats[0]
+	snapshot.ReqMin = snapshot.ReqLats[len(snapshot.ReqLats)-1]
 
-	delayLats := []float64{}
-	copy(delayLats, snapshot.DelayLats)
-	sort.Float64s(delayLats)
-	snapshot.DelayMax = delayLats[0]
-	snapshot.DelayMin = delayLats[len(delayLats)-1]
+	sort.Float64s(snapshot.DelayLats)
+	snapshot.DelayMax = snapshot.DelayLats[0]
+	snapshot.DelayMin = snapshot.DelayLats[len(snapshot.DelayLats)-1]
 
-	resLats := []float64{}
-	copy(resLats, snapshot.ResLats)
-	sort.Float64s(resLats)
-	snapshot.ResMax = resLats[0]
-	snapshot.ResMin = resLats[len(resLats)-1]
+	sort.Float64s(snapshot.ResLats)
+	snapshot.ResMax = snapshot.ResLats[0]
+	snapshot.ResMin = snapshot.ResLats[len(snapshot.ResLats)-1]
 
 	snapshot.Histogram = histrgramForClientReport(snapshot)
 	snapshot.LatencyDistribution = latenciesForClientReport(snapshot)

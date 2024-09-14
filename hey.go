@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rakyll/hey/requester"
@@ -42,8 +44,10 @@ const (
 )
 
 var (
-	mode        = flag.String("mode", "", "clienet or server")
-	targets     = flag.String("targets", "", "target urls")
+	mode          = flag.String("mode", "", "clienet or server")
+	clientTargets = flag.String("client-targets", "", "target urls")
+	serverPort    = flag.String("server-port", "", "server port")
+
 	m           = flag.String("m", "GET", "")
 	headers     = flag.String("h", "", "")
 	body        = flag.String("d", "", "")
@@ -106,6 +110,10 @@ Options:
   -disable-redirects    Disable following of HTTP redirects
   -cpus                 Number of used cpu cores.
                         (default for current machine is %d cores)
+
+  -mode                 Client or Server mode
+  -client-targets       Dey Server URLs
+  -server-port          Server port
 `
 
 func main() {
@@ -115,17 +123,13 @@ func main() {
 
 	var hs headerSlice
 	flag.Var(&hs, "H", "")
-
 	flag.Parse()
-	if flag.NArg() < 1 {
-		usageAndExit("")
-	}
 
 	if mode == nil || *mode == "" {
 		usageAndExit("Please specify the mode.")
 	}
 	if *mode == "client" {
-		targetUrls := strings.Split(*targets, ",")
+		targetUrls := strings.Split(*clientTargets, ",")
 		if len(targetUrls) == 0 {
 			usageAndExit("Please specify the target urls.")
 		}
@@ -167,7 +171,7 @@ func main() {
 		}
 
 		wg.Wait()
-		requester.GenClientReport(serverReports)
+		requester.PrintReport(requester.GenClientReport(serverReports))
 
 		return
 	}
@@ -278,7 +282,8 @@ func main() {
 
 		req.Header = header
 
-		http.HandleFunc("/run", func(rw http.ResponseWriter, r *http.Request) {
+		// TODO: 同時実行数を1にする
+		handler := func(rw http.ResponseWriter, r *http.Request) {
 			w := &requester.Work{
 				Request:            req,
 				RequestBody:        bodyAll,
@@ -315,7 +320,43 @@ func main() {
 				rw.WriteHeader(http.StatusOK)
 				rw.Write(raw)
 			}
-		})
+		}
+
+		var port string
+		if *serverPort != "" {
+			port = fmt.Sprintf(":%s", *serverPort)
+		} else {
+			port = ":8081"
+		}
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/run", handler)
+
+		server := &http.Server{
+			Addr:    port,
+			Handler: mux,
+		}
+
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+		go func() {
+			fmt.Println("Starting server...")
+			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				fmt.Printf("Error starting server: %s\n", err)
+			}
+		}()
+
+		<-stop
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		fmt.Println("Shutting down server...")
+		if err := server.Shutdown(ctx); err != nil {
+			fmt.Printf("Error shutting down server: %s\n", err)
+		}
+		fmt.Println("Server gracefully stopped")
 	}
 }
 

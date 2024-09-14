@@ -112,17 +112,15 @@ func runReporter(r *report) {
 func (r *report) finalize(total time.Duration) ServerReport {
 	return ServerReport{
 		TotalDuration: total,
-		AvgTotal:      r.avgTotal,
-		Fastest:       r.fastest,
-		Slowest:       r.slowest,
-		Average:       r.average,
-		Rps:           r.rps,
+		AvgTotal:      r.avgTotal / float64(len(r.lats)),
+		Rps:           float64(r.numRes) / total.Seconds(),
 		ContentLength: r.sizeTotal,
-		AvgConn:       r.avgConn,
-		AvgDNS:        r.avgDNS,
-		AvgReq:        r.avgReq,
-		AvgRes:        r.avgRes,
-		AvgDelay:      r.avgDelay,
+		AvgConn:       r.avgConn / float64(len(r.lats)),
+		AvgDNS:        r.avgDNS / float64(len(r.lats)),
+		AvgReq:        r.avgReq / float64(len(r.lats)),
+		AvgRes:        r.avgRes / float64(len(r.lats)),
+		AvgDelay:      r.avgDelay / float64(len(r.lats)),
+		Lats:          r.lats,
 		ConnLats:      r.connLats,
 		DnsLats:       r.dnsLats,
 		ReqLats:       r.reqLats,
@@ -130,14 +128,14 @@ func (r *report) finalize(total time.Duration) ServerReport {
 		DelayLats:     r.delayLats,
 		Offsets:       r.offsets,
 		StatusCodes:   r.statusCodes,
+		Errors:        r.errorDist,
 	}
 }
 
 type Report struct {
-	AvgTotal float64
+	AvgTotal float64 // average of total request duration
 	Fastest  float64
 	Slowest  float64
-	Average  float64
 	Rps      float64
 
 	AvgConn  float64

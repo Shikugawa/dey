@@ -96,7 +96,6 @@ Summary:
   Total:	{{ formatNumber .Total.Seconds }} secs
   Slowest:	{{ formatNumber .Slowest }} secs
   Fastest:	{{ formatNumber .Fastest }} secs
-  Average:	{{ formatNumber .Average }} secs
   Requests/sec:	{{ formatNumber .Rps }}
   {{ if gt .SizeTotal 0 }}
   Total data:	{{ .SizeTotal }} bytes
@@ -106,7 +105,7 @@ Response time histogram:
 {{ histogram .Histogram }}
 
 Latency distribution:{{ range .LatencyDistribution }}
-  {{ .Percentage }}%% in {{ formatNumber .Latency }} secs{{ end }}
+  {{ .Percentage }}% in {{ formatNumber .Latency }} secs{{ end }}
 
 Details (average, fastest, slowest):
   DNS+dialup:	{{ formatNumber .AvgConn }} secs, {{ formatNumber .ConnMax }} secs, {{ formatNumber .ConnMin }} secs
