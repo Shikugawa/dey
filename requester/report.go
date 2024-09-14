@@ -15,11 +15,7 @@
 package requester
 
 import (
-	"bytes"
-	"fmt"
 	"io"
-	"log"
-	"sort"
 	"time"
 )
 
@@ -113,158 +109,28 @@ func runReporter(r *report) {
 	r.done <- true
 }
 
-func (r *report) finalize(total time.Duration) {
-	r.total = total
-	r.rps = float64(r.numRes) / r.total.Seconds()
-	r.average = r.avgTotal / float64(len(r.lats))
-	r.avgConn = r.avgConn / float64(len(r.lats))
-	r.avgDelay = r.avgDelay / float64(len(r.lats))
-	r.avgDNS = r.avgDNS / float64(len(r.lats))
-	r.avgReq = r.avgReq / float64(len(r.lats))
-	r.avgRes = r.avgRes / float64(len(r.lats))
-	r.print()
-}
-
-func (r *report) print() {
-	buf := &bytes.Buffer{}
-	if err := newTemplate(r.output).Execute(buf, r.snapshot()); err != nil {
-		log.Println("error:", err.Error())
-		return
+func (r *report) finalize(total time.Duration) ServerReport {
+	return ServerReport{
+		TotalDuration: total,
+		AvgTotal:      r.avgTotal,
+		Fastest:       r.fastest,
+		Slowest:       r.slowest,
+		Average:       r.average,
+		Rps:           r.rps,
+		ContentLength: r.sizeTotal,
+		AvgConn:       r.avgConn,
+		AvgDNS:        r.avgDNS,
+		AvgReq:        r.avgReq,
+		AvgRes:        r.avgRes,
+		AvgDelay:      r.avgDelay,
+		ConnLats:      r.connLats,
+		DnsLats:       r.dnsLats,
+		ReqLats:       r.reqLats,
+		ResLats:       r.resLats,
+		DelayLats:     r.delayLats,
+		Offsets:       r.offsets,
+		StatusCodes:   r.statusCodes,
 	}
-	r.printf(buf.String())
-
-	r.printf("\n")
-}
-
-func (r *report) printf(s string, v ...interface{}) {
-	fmt.Fprintf(r.w, s, v...)
-}
-
-func (r *report) snapshot() Report {
-	snapshot := Report{
-		AvgTotal:    r.avgTotal,
-		Average:     r.average,
-		Rps:         r.rps,
-		SizeTotal:   r.sizeTotal,
-		AvgConn:     r.avgConn,
-		AvgDNS:      r.avgDNS,
-		AvgReq:      r.avgReq,
-		AvgRes:      r.avgRes,
-		AvgDelay:    r.avgDelay,
-		Total:       r.total,
-		ErrorDist:   r.errorDist,
-		NumRes:      r.numRes,
-		Lats:        make([]float64, len(r.lats)),
-		ConnLats:    make([]float64, len(r.lats)),
-		DnsLats:     make([]float64, len(r.lats)),
-		ReqLats:     make([]float64, len(r.lats)),
-		ResLats:     make([]float64, len(r.lats)),
-		DelayLats:   make([]float64, len(r.lats)),
-		Offsets:     make([]float64, len(r.lats)),
-		StatusCodes: make([]int, len(r.lats)),
-	}
-
-	if len(r.lats) == 0 {
-		return snapshot
-	}
-
-	snapshot.SizeReq = r.sizeTotal / int64(len(r.lats))
-
-	copy(snapshot.Lats, r.lats)
-	copy(snapshot.ConnLats, r.connLats)
-	copy(snapshot.DnsLats, r.dnsLats)
-	copy(snapshot.ReqLats, r.reqLats)
-	copy(snapshot.ResLats, r.resLats)
-	copy(snapshot.DelayLats, r.delayLats)
-	copy(snapshot.StatusCodes, r.statusCodes)
-	copy(snapshot.Offsets, r.offsets)
-
-	sort.Float64s(r.lats)
-	r.fastest = r.lats[0]
-	r.slowest = r.lats[len(r.lats)-1]
-
-	sort.Float64s(r.connLats)
-	sort.Float64s(r.dnsLats)
-	sort.Float64s(r.reqLats)
-	sort.Float64s(r.resLats)
-	sort.Float64s(r.delayLats)
-
-	snapshot.Histogram = r.histogram()
-	snapshot.LatencyDistribution = r.latencies()
-
-	snapshot.Fastest = r.fastest
-	snapshot.Slowest = r.slowest
-	snapshot.ConnMax = r.connLats[0]
-	snapshot.ConnMin = r.connLats[len(r.connLats)-1]
-	snapshot.DnsMax = r.dnsLats[0]
-	snapshot.DnsMin = r.dnsLats[len(r.dnsLats)-1]
-	snapshot.ReqMax = r.reqLats[0]
-	snapshot.ReqMin = r.reqLats[len(r.reqLats)-1]
-	snapshot.DelayMax = r.delayLats[0]
-	snapshot.DelayMin = r.delayLats[len(r.delayLats)-1]
-	snapshot.ResMax = r.resLats[0]
-	snapshot.ResMin = r.resLats[len(r.resLats)-1]
-
-	statusCodeDist := make(map[int]int, len(snapshot.StatusCodes))
-	for _, statusCode := range snapshot.StatusCodes {
-		statusCodeDist[statusCode]++
-	}
-	snapshot.StatusCodeDist = statusCodeDist
-
-	return snapshot
-}
-
-func (r *report) latencies() []LatencyDistribution {
-	pctls := []int{10, 25, 50, 75, 90, 95, 99}
-	data := make([]float64, len(pctls))
-	j := 0
-	for i := 0; i < len(r.lats) && j < len(pctls); i++ {
-		current := i * 100 / len(r.lats)
-		if current >= pctls[j] {
-			data[j] = r.lats[i]
-			j++
-		}
-	}
-	res := make([]LatencyDistribution, len(pctls))
-	for i := 0; i < len(pctls); i++ {
-		if data[i] > 0 {
-			res[i] = LatencyDistribution{Percentage: pctls[i], Latency: data[i]}
-		}
-	}
-	return res
-}
-
-func (r *report) histogram() []Bucket {
-	bc := 10
-	buckets := make([]float64, bc+1)
-	counts := make([]int, bc+1)
-	bs := (r.slowest - r.fastest) / float64(bc)
-	for i := 0; i < bc; i++ {
-		buckets[i] = r.fastest + bs*float64(i)
-	}
-	buckets[bc] = r.slowest
-	var bi int
-	var max int
-	for i := 0; i < len(r.lats); {
-		if r.lats[i] <= buckets[bi] {
-			i++
-			counts[bi]++
-			if max < counts[bi] {
-				max = counts[bi]
-			}
-		} else if bi < len(buckets)-1 {
-			bi++
-		}
-	}
-	res := make([]Bucket, len(buckets))
-	for i := 0; i < len(buckets); i++ {
-		res[i] = Bucket{
-			Mark:      buckets[i],
-			Count:     counts[i],
-			Frequency: float64(counts[i]) / float64(len(r.lats)),
-		}
-	}
-	return res
 }
 
 type Report struct {

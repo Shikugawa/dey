@@ -16,8 +16,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math"
 	"net/http"
@@ -27,6 +29,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rakyll/hey/requester"
@@ -39,6 +42,8 @@ const (
 )
 
 var (
+	mode        = flag.String("mode", "", "clienet or server")
+	targets     = flag.String("targets", "", "target urls")
 	m           = flag.String("m", "GET", "")
 	headers     = flag.String("h", "", "")
 	body        = flag.String("d", "", "")
@@ -116,140 +121,202 @@ func main() {
 		usageAndExit("")
 	}
 
-	runtime.GOMAXPROCS(*cpus)
-	num := *n
-	conc := *c
-	q := *q
-	dur := *z
+	if mode == nil || *mode == "" {
+		usageAndExit("Please specify the mode.")
+	}
+	if *mode == "client" {
+		targetUrls := strings.Split(*targets, ",")
+		if len(targetUrls) == 0 {
+			usageAndExit("Please specify the target urls.")
+		}
+		var wg sync.WaitGroup
+		var serverReports []requester.ServerReport
 
-	if dur > 0 {
-		num = math.MaxInt32
-		if conc <= 0 {
-			usageAndExit("-c cannot be smaller than 1.")
-		}
-	} else {
-		if num <= 0 || conc <= 0 {
-			usageAndExit("-n and -c cannot be smaller than 1.")
+		for _, target := range targetUrls {
+			wg.Add(1)
+			go func(target string) {
+				defer wg.Done()
+
+				client := &http.Client{}
+				req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/run", target), nil)
+				if err != nil {
+					fmt.Printf("Error creating request: %s\n", err)
+					return
+				}
+
+				resp, err := client.Do(req)
+				if err != nil {
+					fmt.Printf("Error making request: %s\n", err)
+					return
+				}
+				defer resp.Body.Close()
+
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					fmt.Printf("Error reading response body: %s\n", err)
+					return
+				}
+
+				var serverReport requester.ServerReport
+				if err := json.Unmarshal(body, &serverReport); err != nil {
+					fmt.Printf("Error unmarshalling response body: %s\n", err)
+					return
+				}
+				serverReports = append(serverReports, serverReport)
+			}(target)
 		}
 
-		if num < conc {
-			usageAndExit("-n cannot be less than -c.")
-		}
+		wg.Wait()
+		requester.GenClientReport(serverReports)
+
+		return
 	}
 
-	url := flag.Args()[0]
-	method := strings.ToUpper(*m)
+	if *mode == "server" {
+		runtime.GOMAXPROCS(*cpus)
+		num := *n
+		conc := *c
+		q := *q
+		dur := *z
 
-	// set content-type
-	header := make(http.Header)
-	header.Set("Content-Type", *contentType)
-	// set any other additional headers
-	if *headers != "" {
-		usageAndExit("Flag '-h' is deprecated, please use '-H' instead.")
-	}
-	// set any other additional repeatable headers
-	for _, h := range hs {
-		match, err := parseInputWithRegexp(h, headerRegexp)
+		if dur > 0 {
+			num = math.MaxInt32
+			if conc <= 0 {
+				usageAndExit("-c cannot be smaller than 1.")
+			}
+		} else {
+			if num <= 0 || conc <= 0 {
+				usageAndExit("-n and -c cannot be smaller than 1.")
+			}
+
+			if num < conc {
+				usageAndExit("-n cannot be less than -c.")
+			}
+		}
+
+		url := flag.Args()[0]
+		method := strings.ToUpper(*m)
+
+		// set content-type
+		header := make(http.Header)
+		header.Set("Content-Type", *contentType)
+		// set any other additional headers
+		if *headers != "" {
+			usageAndExit("Flag '-h' is deprecated, please use '-H' instead.")
+		}
+		// set any other additional repeatable headers
+		for _, h := range hs {
+			match, err := parseInputWithRegexp(h, headerRegexp)
+			if err != nil {
+				usageAndExit(err.Error())
+			}
+			header.Set(match[1], match[2])
+		}
+
+		if *accept != "" {
+			header.Set("Accept", *accept)
+		}
+
+		// set basic auth if set
+		var username, password string
+		if *authHeader != "" {
+			match, err := parseInputWithRegexp(*authHeader, authRegexp)
+			if err != nil {
+				usageAndExit(err.Error())
+			}
+			username, password = match[1], match[2]
+		}
+
+		var bodyAll []byte
+		if *body != "" {
+			bodyAll = []byte(*body)
+		}
+		if *bodyFile != "" {
+			slurp, err := ioutil.ReadFile(*bodyFile)
+			if err != nil {
+				errAndExit(err.Error())
+			}
+			bodyAll = slurp
+		}
+
+		var proxyURL *gourl.URL
+		if *proxyAddr != "" {
+			var err error
+			proxyURL, err = gourl.Parse(*proxyAddr)
+			if err != nil {
+				usageAndExit(err.Error())
+			}
+		}
+
+		req, err := http.NewRequest(method, url, nil)
 		if err != nil {
 			usageAndExit(err.Error())
 		}
-		header.Set(match[1], match[2])
-	}
-
-	if *accept != "" {
-		header.Set("Accept", *accept)
-	}
-
-	// set basic auth if set
-	var username, password string
-	if *authHeader != "" {
-		match, err := parseInputWithRegexp(*authHeader, authRegexp)
-		if err != nil {
-			usageAndExit(err.Error())
+		req.ContentLength = int64(len(bodyAll))
+		if username != "" || password != "" {
+			req.SetBasicAuth(username, password)
 		}
-		username, password = match[1], match[2]
-	}
 
-	var bodyAll []byte
-	if *body != "" {
-		bodyAll = []byte(*body)
-	}
-	if *bodyFile != "" {
-		slurp, err := ioutil.ReadFile(*bodyFile)
-		if err != nil {
-			errAndExit(err.Error())
+		// set host header if set
+		if *hostHeader != "" {
+			req.Host = *hostHeader
 		}
-		bodyAll = slurp
-	}
 
-	var proxyURL *gourl.URL
-	if *proxyAddr != "" {
-		var err error
-		proxyURL, err = gourl.Parse(*proxyAddr)
-		if err != nil {
-			usageAndExit(err.Error())
+		ua := header.Get("User-Agent")
+		if ua == "" {
+			ua = heyUA
+		} else {
+			ua += " " + heyUA
 		}
-	}
-
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		usageAndExit(err.Error())
-	}
-	req.ContentLength = int64(len(bodyAll))
-	if username != "" || password != "" {
-		req.SetBasicAuth(username, password)
-	}
-
-	// set host header if set
-	if *hostHeader != "" {
-		req.Host = *hostHeader
-	}
-
-	ua := header.Get("User-Agent")
-	if ua == "" {
-		ua = heyUA
-	} else {
-		ua += " " + heyUA
-	}
-	header.Set("User-Agent", ua)
-
-	// set userAgent header if set
-	if *userAgent != "" {
-		ua = *userAgent + " " + heyUA
 		header.Set("User-Agent", ua)
-	}
 
-	req.Header = header
+		// set userAgent header if set
+		if *userAgent != "" {
+			ua = *userAgent + " " + heyUA
+			header.Set("User-Agent", ua)
+		}
 
-	w := &requester.Work{
-		Request:            req,
-		RequestBody:        bodyAll,
-		N:                  num,
-		C:                  conc,
-		QPS:                q,
-		Timeout:            *t,
-		DisableCompression: *disableCompression,
-		DisableKeepAlives:  *disableKeepAlives,
-		DisableRedirects:   *disableRedirects,
-		H2:                 *h2,
-		ProxyAddr:          proxyURL,
-		Output:             *output,
-	}
-	w.Init()
+		req.Header = header
 
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
-	go func() {
-		<-c
-		w.Stop()
-	}()
-	if dur > 0 {
-		go func() {
-			time.Sleep(dur)
-			w.Stop()
-		}()
+		http.HandleFunc("/run", func(rw http.ResponseWriter, r *http.Request) {
+			w := &requester.Work{
+				Request:            req,
+				RequestBody:        bodyAll,
+				N:                  num,
+				C:                  conc,
+				QPS:                q,
+				Timeout:            *t,
+				DisableCompression: *disableCompression,
+				DisableKeepAlives:  *disableKeepAlives,
+				DisableRedirects:   *disableRedirects,
+				H2:                 *h2,
+				ProxyAddr:          proxyURL,
+				Output:             "csv",
+			}
+			w.Init()
+
+			c := make(chan os.Signal, 1)
+			signal.Notify(c, os.Interrupt)
+			go func() {
+				<-c
+				w.Stop()
+			}()
+			if dur > 0 {
+				go func() {
+					time.Sleep(dur)
+					w.Stop()
+				}()
+			}
+			servReport := w.Run()
+
+			if raw, err := json.Marshal(servReport); err != nil {
+				fmt.Fprintf(os.Stderr, "Error marshalling report: %v\n", err)
+			} else {
+				rw.WriteHeader(http.StatusOK)
+				rw.Write(raw)
+			}
+		})
 	}
-	w.Run()
 }
 
 func errAndExit(msg string) {

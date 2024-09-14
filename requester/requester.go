@@ -117,7 +117,7 @@ func (b *Work) Init() {
 
 // Run makes all the requests, prints the summary. It blocks until
 // all work is done.
-func (b *Work) Run() {
+func (b *Work) Run() ServerReport {
 	b.Init()
 	b.start = now()
 	b.report = newReport(b.writer(), b.results, b.Output, b.N)
@@ -126,7 +126,7 @@ func (b *Work) Run() {
 		runReporter(b.report)
 	}()
 	b.runWorkers()
-	b.Finish()
+	return b.Finish()
 }
 
 func (b *Work) Stop() {
@@ -136,12 +136,12 @@ func (b *Work) Stop() {
 	}
 }
 
-func (b *Work) Finish() {
+func (b *Work) Finish() ServerReport {
 	close(b.results)
 	total := now() - b.start
 	// Wait until the reporter is done.
 	<-b.report.done
-	b.report.finalize(total)
+	return b.report.finalize(total)
 }
 
 func (b *Work) makeRequest(c *http.Client) {

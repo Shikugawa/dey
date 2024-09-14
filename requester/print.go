@@ -38,19 +38,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"text/template"
 )
 
-func newTemplate(output string) *template.Template {
-	outputTmpl := output
-	switch outputTmpl {
-	case "":
-		outputTmpl = defaultTmpl
-	case "csv":
-		outputTmpl = csvTmpl
+func PrintReport(r Report) error {
+	t := template.Must(template.New("tmpl").Funcs(tmplFuncMap).Parse(defaultTmpl))
+	if err := t.Execute(os.Stdout, r); err != nil {
+		return err
 	}
-	return template.Must(template.New("tmpl").Funcs(tmplFuncMap).Parse(outputTmpl))
+	return nil
 }
 
 var tmplFuncMap = template.FuncMap{
