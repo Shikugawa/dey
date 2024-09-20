@@ -49,7 +49,7 @@ type result struct {
 
 type Work struct {
 	// Request is the request to be made.
-	Request *http.Request
+	Requests []*http.Request
 
 	RequestBody []byte
 
@@ -144,7 +144,7 @@ func (b *Work) Finish() ServerReport {
 	return b.report.finalize(total)
 }
 
-func (b *Work) makeRequest(c *http.Client) {
+func (b *Work) makeRequest(c *http.Client, i int) {
 	s := now()
 	var size int64
 	var code int
@@ -154,7 +154,7 @@ func (b *Work) makeRequest(c *http.Client) {
 	if b.RequestFunc != nil {
 		req = b.RequestFunc()
 	} else {
-		req = cloneRequest(b.Request, b.RequestBody)
+		req = cloneRequest(b.Requests[i%len(b.Requests)], b.RequestBody)
 	}
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(info httptrace.DNSStartInfo) {
@@ -226,7 +226,7 @@ func (b *Work) runWorker(client *http.Client, n int) {
 			if b.QPS > 0 {
 				<-throttle
 			}
-			b.makeRequest(client)
+			b.makeRequest(client, i)
 		}
 	}
 }
@@ -238,7 +238,7 @@ func (b *Work) runWorkers() {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
-			ServerName:         b.Request.Host,
+			ServerName:         b.Requests[0].Host,
 		},
 		MaxIdleConnsPerHost: min(b.C, maxIdleConn),
 		DisableCompression:  b.DisableCompression,

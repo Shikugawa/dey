@@ -198,7 +198,7 @@ func main() {
 			}
 		}
 
-		url := flag.Args()[0]
+		urls := strings.Split(flag.Args()[0], ",")
 		method := strings.ToUpper(*m)
 
 		// set content-type
@@ -252,40 +252,44 @@ func main() {
 			}
 		}
 
-		req, err := http.NewRequest(method, url, nil)
-		if err != nil {
-			usageAndExit(err.Error())
-		}
-		req.ContentLength = int64(len(bodyAll))
-		if username != "" || password != "" {
-			req.SetBasicAuth(username, password)
-		}
+		var reqs []*http.Request
+		for _, url := range urls {
+			req, err := http.NewRequest(method, url, nil)
+			if err != nil {
+				usageAndExit(err.Error())
+			}
+			req.ContentLength = int64(len(bodyAll))
+			if username != "" || password != "" {
+				req.SetBasicAuth(username, password)
+			}
 
-		// set host header if set
-		if *hostHeader != "" {
-			req.Host = *hostHeader
-		}
+			// set host header if set
+			if *hostHeader != "" {
+				req.Host = *hostHeader
+			}
 
-		ua := header.Get("User-Agent")
-		if ua == "" {
-			ua = heyUA
-		} else {
-			ua += " " + heyUA
-		}
-		header.Set("User-Agent", ua)
-
-		// set userAgent header if set
-		if *userAgent != "" {
-			ua = *userAgent + " " + heyUA
+			ua := header.Get("User-Agent")
+			if ua == "" {
+				ua = heyUA
+			} else {
+				ua += " " + heyUA
+			}
 			header.Set("User-Agent", ua)
-		}
 
-		req.Header = header
+			// set userAgent header if set
+			if *userAgent != "" {
+				ua = *userAgent + " " + heyUA
+				header.Set("User-Agent", ua)
+			}
+
+			req.Header = header
+			reqs = append(reqs, req)
+		}
 
 		// TODO: 同時実行数を1にする
 		handler := func(rw http.ResponseWriter, r *http.Request) {
 			w := &requester.Work{
-				Request:            req,
+				Requests:           reqs,
 				RequestBody:        bodyAll,
 				N:                  num,
 				C:                  conc,
